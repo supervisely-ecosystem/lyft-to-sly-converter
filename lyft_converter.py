@@ -138,7 +138,6 @@ def process_lyft_scene(lyft, scene):
                 img_path, boxes, cam_intrinsic = lyft.get_sample_data(sensor_token)
                 assert os.path.exists(img_path)
                 data[sensor] = str(img_path)
-                data[sensor + "_intrinsic"] = cam_intrinsic
 
                 sd_record_cam = lyft.get("sample_data", sensor_token)
                 cs_record_cam = lyft.get("calibrated_sensor", sd_record_cam["calibrated_sensor_token"])
@@ -159,16 +158,13 @@ def process_lyft_scene(lyft, scene):
                     cs_record_cam["translation"], Quaternion(cs_record_cam["rotation"]), inverse=True
                 )
 
-                kitti_to_nu_lidar = Quaternion(axis=(0, 0, 1), angle=np.pi)
                 velo_to_cam = np.dot(ego_to_cam, np.dot(world_to_cam_ego, np.dot(lid_ego_to_world, lid_to_ego)))
-                velo_to_cam_kitti = np.dot(velo_to_cam, kitti_to_nu_lidar.transformation_matrix)
+                velo_to_cam_rot = velo_to_cam[:3, :3]
+                velo_to_cam_trans = velo_to_cam[:3, 3]
 
-                velo_to_cam_rot = velo_to_cam_kitti[:3, :3]
-                velo_to_cam_trans = velo_to_cam_kitti[:3, 3]
-                data['extrinsic'] = np.hstack((velo_to_cam_rot, velo_to_cam_trans.reshape(3, 1)))
-                data['intrinsic'] = np.zeros((3, 3))
-                data['imsize'] = (cam_width, cam_height)
-
+                data[f'{sensor}_extrinsic'] = np.hstack((velo_to_cam_rot, velo_to_cam_trans.reshape(3, 1)))
+                data[f'{sensor}_intrinsic'] = np.asarray(cs_record_cam['camera_intrinsic'])
+                data[f'{sensor}_imsize'] = (cam_width, cam_height)
             else:
                 sly.logger.debug(f"pass {sensor} - isn't a camera")
 
@@ -214,7 +210,9 @@ class Superviselyft:
             os.makedirs(related_images_path, exist_ok=True)
 
             for sensor, image_path in data.items():
-                if 'CAM' in sensor and not sensor.endswith('_intrinsic'):
+                if 'CAM' in sensor and not sensor.endswith('_intrinsic') \
+                        and not sensor.endswith("_extrinsic") \
+                        and not sensor.endswith("_imsize"):
                     image_name = sly.fs.get_file_name_with_ext(image_path)
                     sly_path_img = os.path.join(related_images_path, image_name)
                     shutil.copy(src=image_path, dst=sly_path_img)
@@ -224,8 +222,8 @@ class Superviselyft:
                             "deviceId ": sensor,
                             "timestamp": data['timestamp'],
                             "sensorsData": {
-                                "extrinsicMatrix": list(data['extrinsic'].flatten().astype(float)),
-                                "intrinsicMatrix": list(data['intrinsic'].flatten().astype(float))
+                                "extrinsicMatrix": list(data[f'{sensor}_extrinsic'].flatten().astype(float)),
+                                "intrinsicMatrix": list(data[f'{sensor}_intrinsic'].flatten().astype(float))
                             }
                         }
                     }
